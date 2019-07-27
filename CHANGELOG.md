@@ -1,4 +1,220 @@
 --------------------------------------------------
+<a name="0.13.9"></a>
+# [0.13.9](https://github.com/moleculerjs/moleculer/compare/v0.13.8...v0.13.9) (2019-04-18)
+
+# New
+
+## Cache locking feature by [@tiaod](https://github.com/tiaod) [#490](https://github.com/moleculerjs/moleculer/pull/490)
+
+**Example to enable cacher locking:**
+```js
+cacher: {
+  ttl: 60,
+  lock: true, // Set to true to enable cache locks. Default is disabled.
+}
+
+//  Or
+cacher: {
+  ttl: 60,
+  lock: {
+    ttl: 15, //the maximum amount of time you want the resource locked in seconds
+    staleTime: 10, // If the ttl is less than this number, means that the resources are staled
+  }
+}
+
+// Disable the lock
+cacher: {
+  ttl: 60,
+  lock: {
+    enable: false, // Set to false to disable.
+    ttl: 15, //the maximum amount of time you want the resource locked in seconds
+    staleTime: 10, // If the ttl is less than this number, means that the resources are staled
+  }
+}
+```
+
+**Example for Redis cacher with `redlock` library:**
+
+```js
+const broker = new ServiceBroker({
+  cacher: {
+    type: "Redis",
+    options: {
+      // Prefix for keys
+      prefix: "MOL",
+      // set Time-to-live to 30sec.
+      ttl: 30,
+      // Turns Redis client monitoring on.
+      monitor: false,
+      // Redis settings
+      redis: {
+        host: "redis-server",
+        port: 6379,
+        password: "1234",
+        db: 0
+      },
+      lock: {
+        ttl: 15, //the maximum amount of time you want the resource locked in seconds
+        staleTime: 10, // If the ttl is less than this number, means that the resources are staled
+      },
+      // Redlock settings
+      redlock: {
+        // Redis clients. Support node-redis or ioredis. By default will use the local client.
+        clients: [client1, client2, client3],
+        // the expected clock drift; for more details
+        // see http://redis.io/topics/distlock
+        driftFactor: 0.01, // time in ms
+
+        // the max number of times Redlock will attempt
+        // to lock a resource before erroring
+        retryCount: 10,
+
+        // the time in ms between attempts
+        retryDelay: 200, // time in ms
+
+        // the max time in ms randomly added to retries
+        // to improve performance under high contention
+        // see https://www.awsarchitectureblog.com/2015/03/backoff.html
+        retryJitter: 200 // time in ms
+      }
+    }
+  }
+});
+```
+
+# Changes
+- fix event wildcard handling in case of NATS transporter and disabled balancer [#517](https://github.com/moleculerjs/moleculer/pull/517)
+- update typescript d.ts file. [#501](https://github.com/moleculerjs/moleculer/pull/501) [#521](https://github.com/moleculerjs/moleculer/pull/521)
+- fix context calling options cloning.
+- service modification support for ES6 classes [#514](https://github.com/moleculerjs/moleculer/pull/514)
+- fix `null`, `0` & `false` return value issue in case of ProtoBuf serializer [#511](https://github.com/moleculerjs/moleculer/pull/511)
+
+--------------------------------------------------
+<a name="0.13.8"></a>
+# [0.13.8](https://github.com/moleculerjs/moleculer/compare/v0.13.7...v0.13.8) (2019-03-21)
+
+# Changes
+- fix missing field in ProtoBuf & Thrift serializers [#496](https://github.com/moleculerjs/moleculer/pull/496)
+
+--------------------------------------------------
+<a name="0.13.7"></a>
+# [0.13.7](https://github.com/moleculerjs/moleculer/compare/v0.13.6...v0.13.7) (2019-02-21)
+
+# Changes
+- fix ioredis dependency in typescript definition file [#476](https://github.com/moleculerjs/moleculer/pull/476)
+
+--------------------------------------------------
+<a name="0.13.6"></a>
+# [0.13.6](https://github.com/moleculerjs/moleculer/compare/v0.13.5...v0.13.6) (2019-02-15)
+
+# New
+
+## Secure service settings
+To protect your tokens & API keys, define a `$secureSettings: []` property in service settings and set the protected property keys.
+The protected settings won't be published to other nodes and it won't appear in Service Registry. They are only available under `this.settings` inside the service functions.
+
+**Example**
+```js
+// mail.service.js
+module.exports = {
+    name: "mailer",
+    settings: {
+        $secureSettings: ["transport.auth.user", "transport.auth.pass"],
+
+        from: "sender@moleculer.services",
+        transport: {
+            service: 'gmail',
+            auth: {
+                user: 'gmail.user@gmail.com',
+                pass: 'yourpass'
+            }
+        }
+    }        
+    // ...
+};
+```
+
+
+# Changes
+- fix `cacher.clean` issue [#435](https://github.com/moleculerjs/moleculer/pull/435)
+- add `disableVersionCheck` option for broker transit options. It can disable protocol version checking logic in Transit. Default: `false`
+- improve Typescript definition file. [#442](https://github.com/moleculerjs/moleculer/pull/442) [#454](https://github.com/moleculerjs/moleculer/pull/454)
+- waitForServices accept versioned service names (e.g.: `v2.posts`).
+- update dependencies (plus using semver ranges in dependencies)
+
+
+--------------------------------------------------
+<a name="0.13.5"></a>
+# [0.13.5](https://github.com/moleculerjs/moleculer/compare/v0.13.4...v0.13.5) (2018-12-09)
+
+# New
+
+## Conditional caching
+It's a common issue that you enable caching for an action but sometimes you don't want to get data from cache. To solve it you may set `ctx.meta.$cache = false` before calling and the cacher won't send cached responses.
+
+**Example**
+```js
+// Turn off caching for this request
+broker.call("greeter.hello", { name: "Moleculer" }, { meta: { $cache: false }}))
+```
+
+Other solution is that you use a custom function which enables or disables caching for every request. The function gets the `ctx` Context instance so it has access any params or meta data.
+
+**Example**
+```js
+// greeter.service.js
+module.exports = {
+    name: "greeter",
+    actions: {
+        hello: {
+            cache: {
+                enabled: ctx => ctx.params.noCache !== true,
+                keys: ["name"]
+            },
+            handler(ctx) {
+                this.logger.debug(chalk.yellow("Execute handler"));
+                return `Hello ${ctx.params.name}`;
+            }
+        }
+    }
+};
+
+// Use custom `enabled` function to turn off caching for this request
+broker.call("greeter.hello", { name: "Moleculer", noCache: true }))
+```
+
+## LRU memory cacher
+An LRU memory cacher has been added to the core modules. It uses the familiar [lru-cache](https://github.com/isaacs/node-lru-cache) library.
+
+**Example**
+```js
+let broker = new ServiceBroker({ cacher: "MemoryLRU" });
+```
+
+```js
+let broker = new ServiceBroker({
+    logLevel: "debug",
+    cacher: {
+        type: "MemoryLRU",
+        options: {
+            // Maximum items
+            max: 100,
+            // Time-to-Live
+            ttl: 3
+        }
+    }
+});
+```
+
+
+# Changes
+- throw the error further in `loadService` method so that Runner prints the correct error stack.
+- new `packetLogFilter` transit option to filter packets in debug logs (e.g. HEARTBEAT packets) by [@faeron](https://github.com/faeron)
+- the Redis cacher `clean` & `del` methods handle array parameter by [@dkuida](https://github.com/dkuida)
+- the Memory cacher `clean` & `del` methods handle array parameter by [@icebob](https://github.com/icebob)
+- fix to handle `version: 0` as a valid version number by [@ngraef](https://github.com/ngraef)
+
+--------------------------------------------------
 <a name="0.13.4"></a>
 # [0.13.4](https://github.com/moleculerjs/moleculer/compare/v0.13.3...v0.13.4) (2018-11-04)
 

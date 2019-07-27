@@ -11,6 +11,7 @@ let Q = thrift.Q;
 
 
 let ttypes = module.exports = {};
+/* istanbul ignore next */
 let PacketEvent = module.exports.PacketEvent = function(args) {
 	this.ver = null;
 	this.sender = null;
@@ -707,6 +708,7 @@ let PacketInfo = module.exports.PacketInfo = function(args) {
 	this.ipList = null;
 	this.hostname = null;
 	this.client = null;
+	this.seq = null;
 	if (args) {
 		if (args.ver !== undefined && args.ver !== null) {
 			this.ver = args.ver;
@@ -728,6 +730,9 @@ let PacketInfo = module.exports.PacketInfo = function(args) {
 		}
 		if (args.client !== undefined && args.client !== null) {
 			this.client = new ttypes.Client(args.client);
+		}
+		if (args.seq !== undefined && args.seq !== null) {
+			this.seq = args.seq;
 		}
 	}
 };
@@ -808,6 +813,13 @@ PacketInfo.prototype.read = function(input) {
 					input.skip(ftype);
 				}
 				break;
+			case 8:
+				if (ftype == Thrift.Type.I32) {
+					this.seq = input.readI32();
+				} else {
+					input.skip(ftype);
+				}
+				break;
 			default:
 				input.skip(ftype);
 		}
@@ -861,6 +873,11 @@ PacketInfo.prototype.write = function(output) {
 	if (this.client !== null && this.client !== undefined) {
 		output.writeFieldBegin("client", Thrift.Type.STRUCT, 7);
 		this.client.write(output);
+		output.writeFieldEnd();
+	}
+	if (this.seq !== null && this.seq !== undefined) {
+		output.writeFieldBegin("seq", Thrift.Type.I32, 8);
+		output.writeI32(this.seq);
 		output.writeFieldEnd();
 	}
 	output.writeFieldStop();

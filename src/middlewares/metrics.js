@@ -60,7 +60,7 @@ function generateMetricPayload(ctx) {
 		requestID: ctx.requestID,
 		level: ctx.level,
 		startTime: ctx.startTime,
-		remoteCall: ctx.nodeID != ctx.broker.nodeID
+		remoteCall: ctx.nodeID !== ctx.broker.nodeID
 	};
 
 	// Process extra metrics
@@ -127,7 +127,7 @@ function metricFinish(ctx, error) {
  *
  * @param {Context} ctx
  * @param {string} name Field of the context to be assigned.
- * @param {any} payload Object for assignement.
+ * @param {any} payload Object for assignment.
  *
  * @private
  */
@@ -147,7 +147,7 @@ function assignExtraMetrics(ctx, name, payload) {
  * Decide and process extra metrics taking into account action definitions
  *
  * @param {Context} ctx
- * @param {any} payload Object for assignement.
+ * @param {any} payload Object for assignment.
  *
  * @private
  */
@@ -160,7 +160,7 @@ function processExtraMetrics(ctx, payload) {
 	}
 }
 
-function wrapLocalMetricsMiddleware(handler, action) {
+function wrapLocalMetricsMiddleware(handler) {
 
 	if (this.options.metrics) {
 		return function metricsMiddleware(ctx) {
@@ -190,7 +190,7 @@ function wrapLocalMetricsMiddleware(handler, action) {
 	return handler;
 }
 
-function wrapRemoteMetricsMiddleware(handler, action) {
+function wrapRemoteMetricsMiddleware(handler) {
 
 	if (this.options.metrics) {
 		return function metricsMiddleware(ctx) {

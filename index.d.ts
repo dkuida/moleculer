@@ -1,16 +1,22 @@
-import * as Bluebird from "bluebird";
 declare namespace Moleculer {
 	type GenericObject = { [name: string]: any };
 
 	type LogLevels = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 
-	interface Logger {
-		fatal: (...args: any[]) => void;
-		error: (...args: any[]) => void;
-		warn: (...args: any[]) => void;
-		info: (...args: any[]) => void;
-		debug: (...args: any[]) => void;
-		trace: (...args: any[]) => void;
+	type LoggerExternal = Pick<LoggerInstance, "error" | "warn" | "info" | "debug">;
+
+	class Logger {
+		static extend(logger: LoggerExternal): LoggerInstance;
+		static createDefaultLogger(baseLogger: LoggerInstance, bindings: GenericObject, logLevel?: string, logFormatter?: Function): LoggerInstance;
+		static createDefaultLogger(bindings: GenericObject, logLevel?: string, logFormatter?: Function): LoggerInstance;
+	}
+
+	interface LoggerBindings {
+  		nodeID: string;
+  		ns: string;
+  		mod: string;
+  		svc: string;
+  		ver: string | void;
 	}
 
 	class LoggerInstance {
@@ -22,13 +28,29 @@ declare namespace Moleculer {
 		trace(...args: any[]): void;
 	}
 
-	type ActionHandler<T = any> = ((ctx: Context) => Bluebird<T> | T) & ThisType<Service>;
+	type ActionHandler<T = any> = ((ctx: Context) => PromiseLike<T> | T) & ThisType<Service>;
 	type ActionParamSchema = { [key: string]: any };
-	type ActionParamTypes = "boolean" | "number" | "string" | "object" | "array" | ActionParamSchema;
+	type ActionParamTypes =
+		| "any"
+		| "array"
+		| "boolean"
+		| "custom"
+		| "date"
+		| "email"
+		| "enum"
+		| "forbidden"
+		| "function"
+		| "number"
+		| "object"
+		| "string"
+		| "url"
+		| "uuid"
+		| boolean
+		| ActionParamSchema;
 	type ActionParams = { [key: string]: ActionParamTypes };
 
-	type MetricsParamsFuncType= (params: ActionParams) => any;
-	type MetricsMetaFuncType= (meta: object) => any;
+	type MetricsParamsFuncType = (params: ActionParams) => any;
+	type MetricsMetaFuncType = (meta: object) => any;
 	type MetricsOptions = { params?: boolean | string[] | MetricsParamsFuncType, meta?: boolean | string[] | MetricsMetaFuncType };
 
 	interface BulkheadOptions {
@@ -42,12 +64,15 @@ declare namespace Moleculer {
 		keys?: Array<string>;
 	}
 
+	type ActionVisibility = "published" | "public" | "protected" | "private"
+
 	interface Action {
 		name?: string;
+		visibility?: ActionVisibility;
 		params?: ActionParams;
 		service?: Service;
 		cache?: boolean | ActionCacheOptions;
-		handler: ActionHandler;
+		handler?: ActionHandler;
 		metrics?: MetricsOptions;
 		bulkhead?: BulkheadOptions;
 		circuitBreaker?: BrokerCircuitBreakerOptions;
@@ -64,7 +89,8 @@ declare namespace Moleculer {
 		hostname: boolean;
 	}
 
-	type Actions = { [key: string]: Action | ActionHandler; };
+	type ServiceActions = { [key: string]: Action | ActionHandler; };
+	type Actions = ServiceActions;
 
 
 	class Context<P = GenericObject, M = GenericObject> {
@@ -92,13 +118,13 @@ declare namespace Moleculer {
 		cachedResult: boolean;
 
 		setParams(newParams: P, cloning?: boolean): void;
-		call<T = any, P extends GenericObject = GenericObject>(actionName: string, params?: P, opts?: GenericObject): Bluebird<T>;
-		emit(eventName: string, data: any, groups: Array<string>): void;
-		emit(eventName: string, data: any, groups: string): void;
-		emit(eventName: string, data: any): void;
-		broadcast(eventName: string, data: any, groups: Array<string>): void;
-		broadcast(eventName: string, data: any, groups: string): void;
-		broadcast(eventName: string, data: any): void;
+		call<T = any, P extends GenericObject = GenericObject>(actionName: string, params?: P, opts?: GenericObject): PromiseLike<T>;
+		emit<D = any>(eventName: string, data: D, groups: Array<string>): void;
+		emit<D = any>(eventName: string, data: D, groups: string): void;
+		emit<D = any>(eventName: string, data: D): void;
+		broadcast<D = any>(eventName: string, data: D, groups: Array<string>): void;
+		broadcast<D = any>(eventName: string, data: D, groups: string): void;
+		broadcast<D = any>(eventName: string, data: D): void;
 
 		static create(broker: ServiceBroker, endpoint: Endpoint, params: GenericObject, opts: GenericObject): Context;
 		static create(broker: ServiceBroker, endpoint: Endpoint, params: GenericObject): Context;
@@ -117,14 +143,21 @@ declare namespace Moleculer {
 	interface ServiceEvent {
 		name?: string;
 		group?: string;
-		handler: ServiceEventHandler;
+		handler?: ServiceEventHandler;
 	}
 
 	type ServiceEvents = { [key: string]: ServiceEventHandler | ServiceEvent };
 
 	type ServiceMethods = { [key: string]: ((...args: any[]) => any) } & ThisType<Service>;
 
-	type Middleware = (handler: ActionHandler, action: Action) => any;
+	type Middleware = {
+		[name: string]:
+			| ((handler: ActionHandler, action: Action) => any)
+			| ((handler: ActionHandler, event: ServiceEvent) => any)
+			| ((handler: ActionHandler) => any)
+			| ((service: Service) => any)
+			| ((broker: ServiceBroker) => any)
+	}
 
 	interface MiddlewareHandler {
 		list: Middleware[];
@@ -138,44 +171,44 @@ declare namespace Moleculer {
 		wrapMethod(method: string, handler: ActionHandler, bindTo: any): typeof handler;
 	}
 
-	interface ServiceSchema {
+	interface ServiceSchema<S = ServiceSettingSchema> {
 		name: string;
 		version?: string | number;
-		settings?: ServiceSettingSchema;
+		settings?: S;
 		dependencies?: string | GenericObject | Array<string> | Array<GenericObject>;
 		metadata?: GenericObject;
-		actions?: Actions;
+		actions?: ServiceActions;
 		mixins?: Array<ServiceSchema>;
 		methods?: ServiceMethods;
 
 		events?: ServiceEvents;
-		created?: () => void;
-		started?: () => Bluebird<void>;
-		stopped?: () => Bluebird<void>;
+		created?: (() => void) | Array<() => void>;
+		started?: (() => PromiseLike<void>) | Array<() => PromiseLike<void>>;
+		stopped?: (() => PromiseLike<void>) | Array<() => PromiseLike<void>>;
 		[name: string]: any;
 	}
 
-	class Service implements ServiceSchema {
-		constructor(broker: ServiceBroker, schema?: ServiceSchema);
+	class Service<S = ServiceSettingSchema> implements ServiceSchema {
+		constructor(broker: ServiceBroker, schema?: ServiceSchema<S>);
 
-		protected parseServiceSchema(schema: ServiceSchema): void;
+		protected parseServiceSchema(schema: ServiceSchema<S>): void;
 
 		name: string;
 		version?: string | number;
-		settings: ServiceSettingSchema;
+		settings: S;
 		metadata: GenericObject;
 		dependencies: string | GenericObject | Array<string> | Array<GenericObject>;
-		schema: ServiceSchema;
+		schema: ServiceSchema<S>;
 		broker: ServiceBroker;
 		logger: LoggerInstance;
-		actions?: Actions;
-		Promise: typeof Bluebird;
+		actions?: ServiceActions;
+		Promise: PromiseConstructorLike;
 
-		waitForServices(serviceNames: string | Array<string> | Array<GenericObject>, timeout?: number, interval?: number): Bluebird<void>;
+		waitForServices(serviceNames: string | Array<string> | Array<GenericObject>, timeout?: number, interval?: number): PromiseLike<void>;
 
 		_init(): void;
-		_start(): Bluebird<void>;
-		_stop(): Bluebird<void>;
+		_start(): PromiseLike<void>;
+		_stop(): PromiseLike<void>;
 		[name: string]: any;
 	}
 
@@ -206,8 +239,9 @@ declare namespace Moleculer {
 	}
 
 	interface BrokerTransitOptions {
-		disableReconnect?: boolean;
 		maxQueueSize?: number;
+		packetLogFilter?: Array<string>;
+		disableReconnect?: boolean;
 	}
 
 	interface BrokerTrackingOptions {
@@ -223,7 +257,7 @@ declare namespace Moleculer {
 		namespace?: string;
 		nodeID?: string;
 
-		logger?: Logger | boolean;
+		logger?: ((bindings: LoggerBindings) => LoggerInstance) | LoggerInstance | boolean;
 		logLevel?: LogLevels | LogLevelConfig;
 		logFormatter?: Function | string;
 		logObjectPrinter?: Function;
@@ -234,10 +268,10 @@ declare namespace Moleculer {
 
 		maxCallLevel?: number;
 		heartbeatInterval?: number;
-        heartbeatTimeout?: number
+		heartbeatTimeout?: number
 
-        trackContext?: boolean;
-        gracefulStopTimeout?: number;
+		trackContext?: boolean;
+		gracefulStopTimeout?: number;
 
 		tracking?: BrokerTrackingOptions;
 
@@ -326,9 +360,9 @@ declare namespace Moleculer {
 		};
 	}
 
-	type FallbackHandler = (ctx: Context, err: Errors.MoleculerError) => Bluebird<any>;
+	type FallbackHandler = (ctx: Context, err: Errors.MoleculerError) => PromiseLike<any>;
 	type FallbackResponse = string | number | GenericObject;
-	type FallbackResponseHandler = (ctx: Context, err: Errors.MoleculerError) => Bluebird<any>;
+	type FallbackResponseHandler = (ctx: Context, err: Errors.MoleculerError) => PromiseLike<any>;
 
 	interface CallingOptions {
 		timeout?: number;
@@ -338,6 +372,7 @@ declare namespace Moleculer {
 		meta?: GenericObject;
 		parentCtx?: Context;
 		requestID?: string;
+		tracking?: boolean;
 	}
 
 	type CallDefinition<P extends GenericObject = GenericObject> = {
@@ -352,7 +387,7 @@ declare namespace Moleculer {
 		node: GenericObject;
 
 		local: boolean;
-		state:boolean;
+		state: boolean;
 	}
 
 	interface ActionEndpoint extends Endpoint {
@@ -373,7 +408,7 @@ declare namespace Moleculer {
 	class ServiceBroker {
 		constructor(options?: BrokerOptions);
 
-		Promise: typeof Bluebird;
+		Promise: PromiseConstructorLike;
 
 		namespace: string;
 		nodeID: string;
@@ -384,8 +419,8 @@ declare namespace Moleculer {
 		transit: GenericObject;
 		middlewares: MiddlewareHandler;
 
-		start(): Bluebird<void>;
-		stop(): Bluebird<void>;
+		start(): PromiseLike<void>;
+		stop(): PromiseLike<void>;
 
 		repl(): void;
 
@@ -396,10 +431,10 @@ declare namespace Moleculer {
 		watchService(service: Service): void;
 		hotReloadService(service: Service): Service;
 		createService(schema: ServiceSchema, schemaMods?: ServiceSchema): Service;
-		destroyService(service: Service): Bluebird<void>;
+		destroyService(service: Service): PromiseLike<void>;
 
 		getLocalService(serviceName: string, version?: string | number): Service;
-		waitForServices(serviceNames: string | Array<string> | Array<GenericObject>, timeout?: number, interval?: number, logger?: LoggerInstance): Bluebird<void>;
+		waitForServices(serviceNames: string | Array<string> | Array<GenericObject>, timeout?: number, interval?: number, logger?: LoggerInstance): PromiseLike<void>;
 
 		/**
 		 *
@@ -420,13 +455,13 @@ declare namespace Moleculer {
 		 *
 		 * @memberof ServiceBroker
 		 */
-		call<T = any, P extends GenericObject = GenericObject>(actionName: string, params?: P, opts?: CallingOptions): Bluebird<T>;
+		call<T = any, P extends GenericObject = GenericObject>(actionName: string, params?: P, opts?: CallingOptions): PromiseLike<T>;
 
 		/**
 		 * Multiple action calls.
 		 *
 		 * @param {Array<CallDefinition> | { [name: string]: CallDefinition }} def Calling definitions.
-		 * @returns {Bluebird<Array<GenericObject>|GenericObject>}
+		 * @returns {PromiseLike<Array<GenericObject>|GenericObject>}
 		 * | (broker: ServiceBroker): Service)
 		 * @example
 		 * Call `mcall` with an array:
@@ -455,7 +490,7 @@ declare namespace Moleculer {
 		 *
 		 * @memberof ServiceBroker
 		 */
-		mcall<T = any>(def: Array<CallDefinition> | { [name: string]: CallDefinition }): Bluebird<Array<T> | T>;
+		mcall<T = any>(def: Array<CallDefinition> | { [name: string]: CallDefinition }): PromiseLike<Array<T> | T>;
 
 		/**
 		 * Emit an event (global & local)
@@ -466,7 +501,7 @@ declare namespace Moleculer {
 		 *
 		 * @memberof ServiceBroker
 		 */
-		emit(eventName: string, payload?: any, groups?: string | Array<string>): void;
+		emit<P = any>(eventName: string, payload?: P, groups?: string | Array<string>): void;
 
 		/**
 		 * Emit an event for all local & remote services
@@ -478,7 +513,7 @@ declare namespace Moleculer {
 		 *
 		 * @memberof ServiceBroker
 		 */
-		broadcast(eventName: string, payload?: any, groups?: string | Array<string>): void
+		broadcast<P = any>(eventName: string, payload?: P, groups?: string | Array<string>): void
 
 		/**
 		 * Emit an event for all local services
@@ -490,11 +525,11 @@ declare namespace Moleculer {
 		 *
 		 * @memberof ServiceBroker
 		 */
-		broadcastLocal(eventName: string, payload?: any, groups?: string | Array<string>): void;
+		broadcastLocal<P = any>(eventName: string, payload?: P, groups?: string | Array<string>): void;
 
-		ping(): Bluebird<PongResponses>;
-		ping(nodeID: string, timeout?: number): Bluebird<PongResponse>;
-		ping(nodeID: Array<string>, timeout?: number): Bluebird<PongResponses>;
+		ping(): PromiseLike<PongResponses>;
+		ping(nodeID: string, timeout?: number): PromiseLike<PongResponse>;
+		ping(nodeID: Array<string>, timeout?: number): PromiseLike<PongResponses>;
 
 		getHealthStatus(): NodeHealthStatus;
 		getLocalNodeInfo(): {
@@ -506,7 +541,7 @@ declare namespace Moleculer {
 			services: Array<any>;
 		};
 
-		getCpuUsage(): Bluebird<any>;
+		getCpuUsage(): PromiseLike<any>;
 
 		MOLECULER_VERSION: string;
 		PROTOCOL_VERSION: string;
@@ -570,24 +605,24 @@ declare namespace Moleculer {
 	class Transporter {
 		constructor(opts?: GenericObject);
 		init(transit: Transit, messageHandler: (cmd: string, msg: string) => void, afterConnect: (wasReconnect: boolean) => void): void;
-		connect(): Bluebird<any>;
-		disconnect(): Bluebird<any>;
+		connect(): PromiseLike<any>;
+		disconnect(): PromiseLike<any>;
 
-		makeSubscriptions(topics: Array<GenericObject>): Bluebird<void>;
-		subscribe(cmd: string, nodeID?: string): Bluebird<void>;
-		subscribeBalancedRequest(action: string): Bluebird<void>;
-		subscribeBalancedEvent(event: string, group: string): Bluebird<void>;
-		unsubscribeFromBalancedCommands(): Bluebird<void>;
+		makeSubscriptions(topics: Array<GenericObject>): PromiseLike<void>;
+		subscribe(cmd: string, nodeID?: string): PromiseLike<void>;
+		subscribeBalancedRequest(action: string): PromiseLike<void>;
+		subscribeBalancedEvent(event: string, group: string): PromiseLike<void>;
+		unsubscribeFromBalancedCommands(): PromiseLike<void>;
 
-		incomingMessage(cmd: string, msg: Buffer): Bluebird<void>;
+		incomingMessage(cmd: string, msg: Buffer): PromiseLike<void>;
 
-		prepublish(packet: Packet): Bluebird<void>;
-		publish(packet: Packet): Bluebird<void>;
-		publishBalancedEvent(packet: Packet, group: string): Bluebird<void>;
-		publishBalancedRequest(packet: Packet): Bluebird<void>;
+		prepublish(packet: Packet): PromiseLike<void>;
+		publish(packet: Packet): PromiseLike<void>;
+		publishBalancedEvent(packet: Packet, group: string): PromiseLike<void>;
+		publishBalancedRequest(packet: Packet): PromiseLike<void>;
 
 		getTopicName(cmd: string, nodeID?: string): string;
-		makeBalancedSubscriptions(): Bluebird<void>;
+		makeBalancedSubscriptions(): PromiseLike<void>;
 
 		serialize(packet: Packet): Buffer;
 		deserialize(type: string, data: Buffer): Packet;
@@ -596,11 +631,13 @@ declare namespace Moleculer {
 	class Cacher {
 		constructor(opts?: GenericObject);
 		init(broker: ServiceBroker): void;
-		close(): Bluebird<any>;
-		get(key: string): Bluebird<null | GenericObject>;
-		set(key: string, data: any, ttl?: number): Bluebird<any>;
-		del(key: string): Bluebird<any>;
-		clean(match?: string): Bluebird<any>;
+		close(): PromiseLike<any>;
+		get(key: string): PromiseLike<null | GenericObject>;
+		set(key: string, data: any, ttl?: number): PromiseLike<any>;
+		del(key: string|Array<string>): PromiseLike<any>;
+		clean(match?: string|Array<string>): PromiseLike<any>;
+		getCacheKey(actionName: string, params: object, meta: object, keys: Array<string> | null) : string;
+		client?: any;
 	}
 
 	class Serializer {
@@ -615,12 +652,6 @@ declare namespace Moleculer {
 		init(broker: ServiceBroker): void;
 		compile(schema: GenericObject): Function;
 		validate(params: GenericObject, schema: GenericObject): boolean;
-	}
-
-	class LoggerHelper {
-		static extend(logger: LoggerInstance): LoggerInstance;
-		static createDefaultLogger(baseLogger: LoggerInstance, bindings: GenericObject, logLevel?: string, logFormatter?: Function): LoggerInstance;
-		static createDefaultLogger(bindings: GenericObject, logLevel?: string, logFormatter?: Function): LoggerInstance;
 	}
 
 	abstract class BaseStrategy {
@@ -641,8 +672,8 @@ declare namespace Moleculer {
 	}
 
 	namespace Transporters {
-		type MessageHandler = ((cmd: string, msg: any) => Bluebird<void>) & ThisType<Base>;
-		type AfterConnectHandler = ((wasReconnect?: boolean) => Bluebird<void>) & ThisType<Base>;
+		type MessageHandler = ((cmd: string, msg: any) => PromiseLike<void>) & ThisType<Base>;
+		type AfterConnectHandler = ((wasReconnect?: boolean) => PromiseLike<void>) & ThisType<Base>;
 
 		class Base {
 			constructor(opts?: GenericObject);
@@ -650,23 +681,23 @@ declare namespace Moleculer {
 			public init(transit: Transit, messageHandler: MessageHandler, afterConnect: AfterConnectHandler): void;
 			public init(transit: Transit, messageHandler: MessageHandler): void;
 
-			public connect(): Bluebird<any>;
-			public onConnected(wasReconnect?: boolean): Bluebird<void>;
-			public disconnect(): Bluebird<void>;
+			public connect(): PromiseLike<any>;
+			public onConnected(wasReconnect?: boolean): PromiseLike<void>;
+			public disconnect(): PromiseLike<void>;
 
 			public getTopicName(cmd: string, nodeID?: string): string;
-			public makeSubscriptions(topics: Array<GenericObject>): Bluebird<void>;
-			public subscribe(cmd: string, nodeID: string): Bluebird<void>;
-			public subscribeBalancedRequest(action: string): Bluebird<void>;
-			public subscribeBalancedEvent(event: string, group: string): Bluebird<void>;
-			public unsubscribeFromBalancedCommands(): Bluebird<void>;
+			public makeSubscriptions(topics: Array<GenericObject>): PromiseLike<void>;
+			public subscribe(cmd: string, nodeID: string): PromiseLike<void>;
+			public subscribeBalancedRequest(action: string): PromiseLike<void>;
+			public subscribeBalancedEvent(event: string, group: string): PromiseLike<void>;
+			public unsubscribeFromBalancedCommands(): PromiseLike<void>;
 
-			protected incomingMessage(cmd: string, msg: Buffer): Bluebird<void>;
+			protected incomingMessage(cmd: string, msg: Buffer): PromiseLike<void>;
 
-			public publish(packet: Packet): Bluebird<void>;
-			public publishBalancedEvent(packet: Packet, group: string): Bluebird<void>;
-			public publishBalancedRequest(packet: Packet): Bluebird<void>;
-			public prepublish(packet: Packet): Bluebird<void>;
+			public publish(packet: Packet): PromiseLike<void>;
+			public publishBalancedEvent(packet: Packet, group: string): PromiseLike<void>;
+			public publishBalancedRequest(packet: Packet): PromiseLike<void>;
+			public prepublish(packet: Packet): PromiseLike<void>;
 
 			public serialize(packet: Packet): Buffer;
 			public deserialize(type: string, data: Buffer): Packet;
@@ -678,7 +709,7 @@ declare namespace Moleculer {
 			protected transit: Transit;
 			protected broker: ServiceBroker;
 			protected nodeID: string;
-			protected logger: Logger;
+			protected logger: LoggerInstance;
 			protected prefix: string;
 			protected messageHandler: MessageHandler;
 			protected afterConnect?: AfterConnectHandler;
@@ -699,6 +730,7 @@ declare namespace Moleculer {
 		Redis: Cacher
 	};
 	const Serializers: {
+		Base: Serializer,
 		JSON: Serializer,
 		Avro: Serializer,
 		MsgPack: Serializer,
@@ -803,30 +835,30 @@ declare namespace Moleculer {
 	}
 
 	interface Transit {
-		afterConnect(wasReconnect: boolean): Bluebird<void>;
-		connect(): Bluebird<void>;
-		disconnect(): Bluebird<void>;
-		sendDisconnectPacket(): Bluebird<void>;
-		makeSubscriptions(): Bluebird<Array<void>>;
-		messageHandler(cmd: string, msg: GenericObject): boolean | Bluebird<void> | undefined;
-		request(ctx: Context): Bluebird<void>;
+		afterConnect(wasReconnect: boolean): PromiseLike<void>;
+		connect(): PromiseLike<void>;
+		disconnect(): PromiseLike<void>;
+		sendDisconnectPacket(): PromiseLike<void>;
+		makeSubscriptions(): PromiseLike<Array<void>>;
+		messageHandler(cmd: string, msg: GenericObject): boolean | PromiseLike<void> | undefined;
+		request(ctx: Context): PromiseLike<void>;
 		sendBroadcastEvent(nodeID: string, eventName: string, data: GenericObject, nodeGroups: GenericObject): void;
 		sendBalancedEvent(eventName: string, data: GenericObject, nodeGroups: GenericObject): void;
 		sendEventToGroups(eventName: string, data: GenericObject, groups: Array<string>): void;
 		sendEventToGroups(eventName: string, data: GenericObject): void;
 		removePendingRequest(id: string): void;
 		removePendingRequestByNodeID(nodeID: string): void;
-		sendResponse(nodeID: string, id: string, data: GenericObject, err: Error): Bluebird<void>;
-		sendResponse(nodeID: string, id: string, data: GenericObject): Bluebird<void>;
-		discoverNodes(): Bluebird<void>;
-		discoverNode(nodeID: string): Bluebird<void>;
-		sendNodeInfo(nodeID: string): Bluebird<void | Array<void>>;
-		sendPing(nodeID: string): Bluebird<void>;
-		sendPong(payload: GenericObject): Bluebird<void>;
+		sendResponse(nodeID: string, id: string, data: GenericObject, err: Error): PromiseLike<void>;
+		sendResponse(nodeID: string, id: string, data: GenericObject): PromiseLike<void>;
+		discoverNodes(): PromiseLike<void>;
+		discoverNode(nodeID: string): PromiseLike<void>;
+		sendNodeInfo(nodeID: string): PromiseLike<void | Array<void>>;
+		sendPing(nodeID: string): PromiseLike<void>;
+		sendPong(payload: GenericObject): PromiseLike<void>;
 		processPong(payload: GenericObject): void;
-		sendHeartbeat(localNode: NodeHealthStatus): Bluebird<void>;
-		subscribe(topic: string, nodeID: string): Bluebird<void>;
-		publish(packet: Packet): Bluebird<void>;
+		sendHeartbeat(localNode: NodeHealthStatus): PromiseLike<void>;
+		subscribe(topic: string, nodeID: string): PromiseLike<void>;
+		publish(packet: Packet): PromiseLike<void>;
 
 		pendingRequests: Map<string, TransitRequest>
 		nodeID: string;

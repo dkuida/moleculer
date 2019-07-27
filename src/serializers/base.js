@@ -74,7 +74,7 @@ class Serializer {
 	 * @memberof Serializer
 	 */
 	serializeCustomFields(type, obj) {
-		switch(type) {
+		switch (type) {
 			case P.PACKET_INFO: {
 				obj.services = JSON.stringify(obj.services);
 				if (obj.config)
@@ -82,26 +82,24 @@ class Serializer {
 				break;
 			}
 			case P.PACKET_EVENT: {
-				if (obj.data)
+				if (obj.data !== undefined)
 					obj.data = JSON.stringify(obj.data);
 				break;
 			}
 			case P.PACKET_REQUEST: {
-				if (obj.stream)
-					obj.params = obj.params;
-				else
+				if (!obj.stream) {
 					obj.params = JSON.stringify(obj.params);
-
+				}
 				obj.meta = JSON.stringify(obj.meta);
 				break;
 			}
 			case P.PACKET_RESPONSE: {
 				obj.meta = JSON.stringify(obj.meta);
-				if (obj.data) {
-					if (obj.stream)
-						obj.data = obj.data;
-					else
+				if (obj.data != undefined) {
+					if (!obj.stream) {
 						obj.data = JSON.stringify(obj.data);
+					}
+
 				}
 				if (obj.error)
 					obj.error = JSON.stringify(obj.error);
@@ -135,7 +133,7 @@ class Serializer {
 	 * @memberof Serializer
 	 */
 	deserializeCustomFields(type, obj) {
-		switch(type) {
+		switch (type) {
 			case P.PACKET_INFO: {
 				obj.services = JSON.parse(obj.services);
 				if (obj.config)
@@ -148,21 +146,18 @@ class Serializer {
 				break;
 			}
 			case P.PACKET_REQUEST: {
-				if (obj.stream)
-					obj.params = obj.params;
-				else
+				if (!obj.stream) {
 					obj.params = JSON.parse(obj.params);
-
+				}
 				obj.meta = JSON.parse(obj.meta);
 				break;
 			}
 			case P.PACKET_RESPONSE: {
 				obj.meta = JSON.parse(obj.meta);
-				if (obj.data) {
-					if (obj.stream)
-						obj.data = obj.data;
-					else
+				if (obj.data != null) {
+					if (!obj.stream) {
 						obj.data = JSON.parse(obj.data);
+					}
 				}
 				if (obj.error)
 					obj.error = JSON.parse(obj.error);

@@ -2,7 +2,7 @@ const ServiceBroker = require("../../../src/service-broker");
 const MemoryCacher = require("../../../src/cachers/memory");
 
 
-describe("Test MemoryMapCacher constructor", () => {
+describe("Test MemoryCacher constructor", () => {
 
 	it("should create an empty options", () => {
 		const cacher = new MemoryCacher();
@@ -177,6 +177,18 @@ describe("Test MemoryCacher delete", () => {
 		});
 	});
 
+	it("should delete multiple keys", () => {
+		cacher.set("key1", "value1");
+		cacher.set("key2", "value2");
+		cacher.set("key3", "value3");
+
+		cacher.del(["key1", "key3"]);
+
+		expect(cacher.cache.get("key1")).toBeUndefined();
+		expect(cacher.cache.get("key2")).toEqual({ data: "value2", expire: null });
+		expect(cacher.cache.get("key3")).toBeUndefined();
+	});
+
 });
 
 describe("Test MemoryCacher clean", () => {
@@ -234,6 +246,25 @@ describe("Test MemoryCacher clean", () => {
 		});
 	});
 
+	it("should clean by multiple patterns", () => {
+		cacher.set("key.1", "value1");
+		cacher.set("key.2", "value2");
+		cacher.set("key.3", "value3");
+
+		cacher.set("other.1", "value1");
+		cacher.set("other.2", "value2");
+		cacher.set("other.3", "value3");
+
+		cacher.clean(["key.*", "*.2"]);
+
+		expect(cacher.cache.get("key.1")).toBeUndefined();
+		expect(cacher.cache.get("key.2")).toBeUndefined();
+		expect(cacher.cache.get("key.3")).toBeUndefined();
+		expect(cacher.cache.get("other.1")).toBeDefined();
+		expect(cacher.cache.get("other.2")).toBeUndefined();
+		expect(cacher.cache.get("other.3")).toBeDefined();
+	});
+
 });
 
 describe("Test MemoryCacher expired method", () => {
@@ -282,3 +313,27 @@ describe("Test MemoryCacher expired method", () => {
 	});
 
 });
+
+describe("Test MemoryCacher getWithTTL method", ()=>{
+	const cacher = new MemoryCacher({
+		ttl: 30,
+		lock: true
+	});
+	const broker = new ServiceBroker({
+		logger: false,
+		cacher
+	});
+	const get = jest.spyOn(cacher, 'get');
+	const getWithTTL = jest.spyOn(cacher, 'getWithTTL');
+	const lock = jest.spyOn(cacher, 'lock');
+	const key1 = 'abcd1234';
+	it("should return data and ttl", () => {
+		return cacher.set(key1, 'hello', 30).then(() => {
+			return cacher.getWithTTL(key1).then(res => {
+				expect(res.data).toEqual('hello')
+				expect(res.ttl).toBeLessThanOrEqual(30)
+			})
+		})
+
+	})
+})

@@ -86,7 +86,8 @@ const defaultOptions = {
 	transit: {
 		maxQueueSize: 50 * 1000, // 50k ~ 400MB,
 		packetLogFilter: [],
-		disableReconnect: false
+		disableReconnect: false,
+		disableVersionCheck: false
 	},
 
 	cacher: null,
@@ -335,7 +336,7 @@ class ServiceBroker {
 				this.logger.info(`ServiceBroker with ${this.services.length} service(s) is started successfully.`);
 				this.started = true;
 
-				this.localBus.emit("$broker.started");
+				this.broadcastLocal("$broker.started");
 			})
 			.then(() => {
 				if (this.transit)
@@ -400,7 +401,7 @@ class ServiceBroker {
 			.then(() => {
 				this.logger.info("ServiceBroker is stopped. Good bye.");
 
-				this.localBus.emit("$broker.stopped");
+				this.broadcastLocal("$broker.stopped");
 
 				if ((this.options.skipProcessEventRegistration || false) !== true) {
 					process.removeListener("beforeExit", this._closeFn);
@@ -509,11 +510,9 @@ class ServiceBroker {
 		else
 			serviceFiles = glob.sync(path.join(folder, fileMask));
 
-		if (serviceFiles) {
-			serviceFiles.forEach(filename => {
-				this.loadService(filename);
-			});
-		}
+		if (serviceFiles)
+			serviceFiles.forEach(filename => this.loadService(filename));
+
 		return serviceFiles.length;
 	}
 
@@ -535,6 +534,7 @@ class ServiceBroker {
 			schema = require(fName);
 		} catch (e) {
 			this.logger.error(`Failed to load service '${fName}'`, e);
+			throw e;
 		}
 
 		let svc;
@@ -627,7 +627,7 @@ class ServiceBroker {
 
 		schema = this.normalizeSchemaConstructor(schema);
 		if (this.ServiceFactory.isPrototypeOf(schema)) {
-			service = new schema(this);
+			service = new schema(this, schemaMods);
 		} else {
 			let s = schema;
 			if (schemaMods)
@@ -674,7 +674,6 @@ class ServiceBroker {
 	 */
 	registerLocalService(registryItem) {
 		this.registry.registerLocalService(registryItem);
-		this.servicesChanged(true);
 	}
 
 	/**
@@ -752,7 +751,30 @@ class ServiceBroker {
 		if (!Array.isArray(serviceNames))
 			serviceNames = [serviceNames];
 
-		const serviceObjs = serviceNames.map(x => _.isPlainObject(x) ? x : { name: x }).filter(x => x.name);
+		const serviceObjs = serviceNames.map(x => {
+			if (_.isPlainObject(x)) {
+				return x;
+			}
+
+			if (_.isString(x)) {
+				// Parse versioned service identifier strings
+				const split = x.split(".");
+				if (
+					split.length === 2 &&
+					split[0].length > 0 &&
+					split[0].match(/^v\d+$/)
+				) {
+					return {
+						name: split[1],
+						version: Number(split[0].slice(1)),
+					};
+				}
+				// If not versioned, fall back to the existing default action to hopefully avoid breaking existing implementations
+			}
+
+			return { name: x };
+		}).filter(x => x.name);
+
 		if (serviceObjs.length == 0)
 			return Promise.resolve();
 
@@ -932,8 +954,10 @@ class ServiceBroker {
 		if (opts.ctx != null) {
 			// Reused context
 			ctx = opts.ctx;
-			ctx.endpoint = endpoint;
-			ctx.action = endpoint.action;
+			if (endpoint) {
+				ctx.endpoint = endpoint;
+				ctx.action = endpoint.action;
+			}
 		} else {
 			// New root context
 			ctx = this.ContextFactory.create(this, endpoint, params, opts);
@@ -1101,14 +1125,27 @@ class ServiceBroker {
 		this.logger.debug(`Broadcast '${eventName}' event`+ (groups ? ` to '${groups.join(", ")}' group(s)` : "") + ".");
 
 		if (this.transit) {
-			const endpoints = this.registry.events.getAllEndpoints(eventName, groups);
+			if (!this.options.disableBalancer) {
+				const endpoints = this.registry.events.getAllEndpoints(eventName, groups);
 
-			// Send to remote services
-			endpoints.forEach(ep => {
-				if (ep.id != this.nodeID) {
-					return this.transit.sendBroadcastEvent(ep.id, eventName, payload, groups);
+				// Send to remote services
+				endpoints.forEach(ep => {
+					if (ep.id != this.nodeID) {
+						return this.transit.sendBroadcastEvent(ep.id, eventName, payload, groups);
+					}
+				});
+			} else {
+				// Disabled balancer case
+				if (!groups || groups.length == 0) {
+					// Apply to all groups
+					groups = this.getEventGroups(eventName);
 				}
-			});
+
+				if (groups.length == 0)
+					return;
+
+				return this.transit.sendBroadcastEvent(null, eventName, payload, groups);
+			}
 		}
 
 		// Send to local services

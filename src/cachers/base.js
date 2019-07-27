@@ -76,6 +76,18 @@ class Cacher {
 	}
 
 	/**
+	 * Get a cached content and ttl by key
+	 *
+	 * @param {any} key
+	 *
+	 * @memberof Cacher
+	 */
+	getWithTTL(/*key*/) {
+		/* istanbul ignore next */
+		throw new Error("Not implemented method!");
+	}
+
+	/**
 	 * Set a content by key to cache
 	 *
 	 * @param {any} key
@@ -92,7 +104,7 @@ class Cacher {
 	/**
 	 * Delete a content by key from cache
 	 *
-	 * @param {any} key
+	 * @param {string|Array<string>} key
 	 *
 	 * @memberof Cacher
 	 */
@@ -104,7 +116,7 @@ class Cacher {
 
 	/**
 	 * Clean cache. Remove every key by match
-	 * @param {any} match string. Default is "**"
+	 * @param {string|Array<string>} match string. Default is "**"
 	 * @returns {Promise}
 	 *
 	 * @memberof Cacher
@@ -217,9 +229,80 @@ class Cacher {
 	 */
 	middleware() {
 		return (handler, action) => {
-			if (action.cache) {
+			const opts = _.defaultsDeep({}, _.isObject(action.cache) ? action.cache : { enabled: !!action.cache });
+			opts.lock = _.defaultsDeep({}, _.isObject(opts.lock) ? opts.lock : { enabled: !!opts.lock });
+			if (opts.enabled !== false) {
+				const isEnabledFunction = _.isFunction(opts.enabled);
+
 				return function cacherMiddleware(ctx) {
-					const cacheKey = this.getCacheKey(action.name, ctx.params, ctx.meta, action.cache.keys);
+					if (isEnabledFunction) {
+						if (!opts.enabled.call(ctx.service, ctx)) {
+							// Cache is disabled. Call the handler only.
+							return handler(ctx);
+						}
+					}
+
+					// Disable caching with `ctx.meta.$cache = false`
+					if (ctx.meta["$cache"] === false)
+						return handler(ctx);
+
+					const cacheKey = this.getCacheKey(action.name, ctx.params, ctx.meta, opts.keys);
+					// Using lock
+					if(opts.lock.enabled !== false){
+						let cachePromise;
+						if(opts.lock.staleTime && this.getWithTTL){ // If enable cache refresh
+							cachePromise = this.getWithTTL(cacheKey).then(({ data, ttl }) => {
+								if (data != null) {
+									if(opts.lock.staleTime && ttl && ttl < opts.lock.staleTime){
+										// Cache is stale, try to refresh it.
+										this.tryLock(cacheKey, opts.lock.ttl).then(unlock=>{
+											return handler(ctx).then(result => {
+												// Save the result to the cache and realse the lock.
+												return this.set(cacheKey, result, opts.ttl).then(()=>unlock());
+											}).catch(err => {
+												return this.del(cacheKey).then(()=>unlock());
+											});
+										}).catch(err=>{
+											// The cache is refreshing on somewhere else.
+										})
+									}
+								}
+								return data;
+							});
+						} else {
+							cachePromise = this.get(cacheKey)
+						}
+						return cachePromise.then(data=>{
+							if (data != null) {
+								// Found in the cache! Don't call handler, return with the content
+								ctx.cachedResult = true;
+								return data;
+							}
+							// Not found in the cache! Acquire a lock
+							return this.lock(cacheKey, opts.lock.ttl).then(unlock => {
+								return this.get(cacheKey).then(content => {
+									if (content != null) {
+										// Cache found. Realse the lock and return the value.
+										ctx.cachedResult = true;
+										return unlock().then(() => {
+											return content;
+										})
+									}
+									// Call the handler
+									return handler(ctx).then(result => {
+										// Save the result to the cache and realse the lock.
+										this.set(cacheKey, result, opts.ttl).then(()=>unlock());
+										return result;
+									}).catch(e => {
+										return unlock().then(() => {
+											return Promise.reject(e)
+										})
+									})
+								});
+							});
+						})
+					}
+					// Not using lock
 					return this.get(cacheKey).then(content => {
 						if (content != null) {
 							// Found in the cache! Don't call handler, return with the content
@@ -230,7 +313,7 @@ class Cacher {
 						// Call the handler
 						return handler(ctx).then(result => {
 							// Save the result to the cache
-							this.set(cacheKey, result, action.cache.ttl);
+							this.set(cacheKey, result, opts.ttl);
 
 							return result;
 						});
